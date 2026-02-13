@@ -1,0 +1,26 @@
+{
+  "name": "todo-sync-ts",
+  "version": "0.1.0",
+  "description": "One-way sync from Things 3 and Asana into Taskwarrior (TypeScript)",
+  "type": "module",
+  "bin": {
+    "todo-sync-ts": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "dev": "npx tsx src/cli.ts"
+  },
+  "dependencies": {
+    "asana": "^3.0.0",
+    "better-sqlite3": "^11.0.0",
+    "commander": "^12.0.0",
+    "smol-toml": "^1.3.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.5.0"
+  }
+}
