@@ -1,0 +1,7 @@
+things.py>=0.0.15
+asana>=5.0.0
+tasklib>=2.5.1
+click>=8.1
+
+[:python_version < "3.11"]
+tomli>=2.0

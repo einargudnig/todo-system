@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: todo-sync
+Version: 0.1.0
+Summary: One-way sync from Things 3 and Asana into Taskwarrior
+Requires-Python: >=3.11
+Requires-Dist: things.py>=0.0.15
+Requires-Dist: asana>=5.0.0
+Requires-Dist: tasklib>=2.5.1
+Requires-Dist: click>=8.1
+Requires-Dist: tomli>=2.0; python_version < "3.11"

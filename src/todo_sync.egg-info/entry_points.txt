@@ -1,0 +1,2 @@
+[console_scripts]
+todo-sync = todo_sync.cli:main

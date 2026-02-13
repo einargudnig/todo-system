@@ -1,0 +1,21 @@
+[asana]
+personal_access_token = "YOUR_TOKEN_HERE"
+# Optional: specify workspace GID. Auto-detected if you belong to only one.
+# workspace = ""
+
+[things]
+enabled = true
+# Optional: only sync specific areas. Empty list = all areas.
+# areas = ["Work", "Personal"]
+
+[sync]
+# Tags added to all imported tasks for easy filtering
+things_tag = "things3"
+asana_tag = "asana"
+
+[ollama]
+# Filter tasks through a local LLM before importing
+# Only computer/dev-related tasks make it into Taskwarrior
+enabled = true
+model = "lfm2.5-thinking"
+# base_url = "http://localhost:11434"
