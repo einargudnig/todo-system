@@ -5,11 +5,16 @@
 import { Command } from "commander";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+import { existsSync, mkdirSync, symlinkSync, unlinkSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadConfig, configExists, createDefaultConfig } from "./config.js";
 import { ensureUdas, upsertTask } from "./taskwarrior.js";
 import { fetchThingsTasks } from "./things-reader.js";
 import { fetchAsanaTasks } from "./asana-reader.js";
 import { filterTasks } from "./ollama-filter.js";
+import { syncCompletionsToThings } from "./things-writer.js";
+import { syncCompletionsToAsana } from "./asana-writer.js";
 import type { Config, TaskData, UpsertAction } from "./types.js";
 
 const program = new Command();
@@ -174,6 +179,140 @@ program
       await syncSource("Asana", fetchAsanaTasks, "asana_gid", config);
     } else {
       console.log("Asana not configured, skipping.");
+    }
+  });
+
+// ─── push ──────────────────────────────────────────────────────────
+program
+  .command("push")
+  .description("Push completed tasks back to Things 3 and Asana")
+  .action(async () => {
+    const config = loadConfig();
+
+    // Push to Things 3
+    if (config.things.enabled) {
+      console.log("Syncing completions back to Things 3...");
+      const { synced, skipped } = syncCompletionsToThings();
+      console.log(`  Completed ${synced} tasks in Things 3 (${skipped} already synced)`);
+    }
+
+    // Push to Asana
+    const token = config.asana.personal_access_token;
+    if (token && token !== "YOUR_TOKEN_HERE") {
+      console.log("Syncing completions back to Asana...");
+      const { synced, skipped, errors } = await syncCompletionsToAsana();
+      let msg = `  Completed ${synced} tasks in Asana (${skipped} already synced)`;
+      if (errors > 0) msg += `, ${errors} errors`;
+      console.log(msg);
+    }
+  });
+
+// ─── push-things ───────────────────────────────────────────────────
+program
+  .command("push-things")
+  .description("Push completed tasks back to Things 3 only")
+  .action(async () => {
+    console.log("Syncing completions back to Things 3...");
+    const { synced, skipped } = syncCompletionsToThings();
+    console.log(`  Completed ${synced} tasks in Things 3 (${skipped} already synced)`);
+  });
+
+// ─── push-asana ────────────────────────────────────────────────────
+program
+  .command("push-asana")
+  .description("Push completed tasks back to Asana only")
+  .action(async () => {
+    console.log("Syncing completions back to Asana...");
+    const { synced, skipped, errors } = await syncCompletionsToAsana();
+    let msg = `  Completed ${synced} tasks in Asana (${skipped} already synced)`;
+    if (errors > 0) msg += `, ${errors} errors`;
+    console.log(msg);
+  });
+
+// ─── sync ──────────────────────────────────────────────────────────
+program
+  .command("sync")
+  .description("Full bi-directional sync: pull from Things 3 & Asana, push completions back")
+  .action(async () => {
+    const config = loadConfig();
+
+    // Pull from Things
+    if (config.things.enabled) {
+      await syncSource("Things 3", fetchThingsTasks, "things3_uuid", config, {
+        useOllama: true,
+      });
+    }
+
+    // Pull from Asana
+    const token = config.asana.personal_access_token;
+    if (token && token !== "YOUR_TOKEN_HERE") {
+      await syncSource("Asana", fetchAsanaTasks, "asana_gid", config);
+    }
+
+    // Push completions back to Things
+    if (config.things.enabled) {
+      console.log("\nSyncing completions back to Things 3...");
+      const { synced, skipped } = syncCompletionsToThings();
+      console.log(`  Completed ${synced} tasks in Things 3 (${skipped} already synced)`);
+    }
+
+    // Push completions back to Asana
+    if (token && token !== "YOUR_TOKEN_HERE") {
+      console.log("\nSyncing completions back to Asana...");
+      const { synced, skipped, errors } = await syncCompletionsToAsana();
+      let msg = `  Completed ${synced} tasks in Asana (${skipped} already synced)`;
+      if (errors > 0) msg += `, ${errors} errors`;
+      console.log(msg);
+    }
+  });
+
+// ─── install-hook ──────────────────────────────────────────────────
+program
+  .command("install-hook")
+  .description("Install Taskwarrior hook for automatic Things 3 sync on completion")
+  .action(() => {
+    const homeDir = process.env.HOME || process.env.USERPROFILE || "";
+    const taskHooksDir = join(homeDir, ".task", "hooks");
+    const hookName = "on-exit-things-sync";
+    const hookDest = join(taskHooksDir, hookName);
+    
+    // Get the source hook path (relative to this file)
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = dirname(__filename);
+    const tsRoot = dirname(__dirname); // Go up from src/ to ts/
+    const hookSrc = join(tsRoot, "hooks", hookName);
+    
+    // Create hooks directory if needed
+    if (!existsSync(taskHooksDir)) {
+      mkdirSync(taskHooksDir, { recursive: true });
+      console.log(`Created ${taskHooksDir}`);
+    }
+    
+    // Remove existing hook if present
+    if (existsSync(hookDest)) {
+      unlinkSync(hookDest);
+      console.log(`Removed existing hook at ${hookDest}`);
+    }
+    
+    // Create symlink
+    symlinkSync(hookSrc, hookDest);
+    console.log(`Installed hook: ${hookDest} -> ${hookSrc}`);
+    console.log("\n✓ Hook installed! Tasks completed in Taskwarrior will now auto-sync to Things 3.");
+  });
+
+// ─── uninstall-hook ────────────────────────────────────────────────
+program
+  .command("uninstall-hook")
+  .description("Remove the Taskwarrior hook")
+  .action(() => {
+    const homeDir = process.env.HOME || process.env.USERPROFILE || "";
+    const hookPath = join(homeDir, ".task", "hooks", "on-exit-things-sync");
+    
+    if (existsSync(hookPath)) {
+      unlinkSync(hookPath);
+      console.log(`Removed hook: ${hookPath}`);
+    } else {
+      console.log("Hook not installed.");
     }
   });
 

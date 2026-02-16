@@ -12,7 +12,7 @@ const CONFIG_PATH = join(CONFIG_DIR, "config.toml");
 function defaults(): Config {
   return {
     asana: { personal_access_token: "", workspace: "" },
-    things: { enabled: true, areas: [] },
+    things: { enabled: true, auth_token: "", areas: [] },
     sync: { things_tag: "things3", asana_tag: "asana" },
     ollama: {
       enabled: true,

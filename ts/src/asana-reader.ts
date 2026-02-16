@@ -1,21 +1,29 @@
-/** Read tasks from Asana via the official Node.js SDK. */
+/** Read tasks from Asana via the official Node.js SDK (v3). */
 
-import asana from "asana";
-import type { AsanaClient } from "asana";
+import * as asana from "asana";
 import { buildTaskData } from "./taskwarrior.js";
 import type { Config, TaskData } from "./types.js";
 
-const OPT_FIELDS =
-  "gid,name,completed,due_on,tags,tags.name,projects,projects.name,notes";
+const OPT_FIELDS = [
+  "gid",
+  "name",
+  "completed",
+  "due_on",
+  "tags",
+  "tags.name",
+  "projects",
+  "projects.name",
+  "notes",
+];
 
 async function getWorkspaceGid(
-  client: AsanaClient,
+  workspacesApi: asana.WorkspacesApi,
   configured: string,
 ): Promise<string> {
   if (configured) return configured;
 
-  const workspacesResponse = await client.workspaces.getWorkspaces();
-  const workspaces = workspacesResponse.data ?? [];
+  const response = await workspacesApi.getWorkspaces({});
+  const workspaces = response.data ?? [];
 
   if (workspaces.length === 0) {
     throw new Error("No Asana workspaces found for this account.");
@@ -43,28 +51,57 @@ export async function fetchAsanaTasks(config: Config): Promise<TaskData[]> {
     );
   }
 
-  const client = asana.Client.create().useAccessToken(token);
+  // Set up the API client with authentication
+  const client = new asana.ApiClient();
+  client.authentications["token"].accessToken = token;
+
+  const workspacesApi = new asana.WorkspacesApi(client);
+  const userTaskListsApi = new asana.UserTaskListsApi(client);
+  const tasksApi = new asana.TasksApi(client);
+
   const workspaceGid = await getWorkspaceGid(
-    client,
+    workspacesApi,
     asanaCfg.workspace ?? "",
   );
 
   // Get user's task list
-  const userTaskList = await client.userTaskLists.getUserTaskListForUser("me", {
-    workspace: workspaceGid,
-  });
-
-  // Fetch tasks
-  const tasksResponse = await client.tasks.getTasksForUserTaskList(
-    userTaskList.gid,
-    { opt_fields: OPT_FIELDS },
+  const userTaskList = await userTaskListsApi.getUserTaskListForUser(
+    "me",
+    workspaceGid,
   );
-  const rawTasks = tasksResponse.data ?? [];
+
+  // Fetch tasks from the user's task list (only incomplete tasks)
+  const rawTasks: Array<{
+    gid: string;
+    name: string;
+    completed: boolean;
+    due_on: string | null;
+    tags: Array<{ name?: string }> | null;
+    projects: Array<{ name?: string }> | null;
+    notes: string | null;
+  }> = [];
+
+  let offset: string | undefined;
+  do {
+    const opts: Record<string, unknown> = {
+      opt_fields: OPT_FIELDS.join(","),
+      limit: 100,
+      completed_since: "now", // Only incomplete tasks
+    };
+    if (offset) opts.offset = offset;
+
+    const tasksResponse = await tasksApi.getTasksForUserTaskList(
+      userTaskList.data.gid,
+      opts,
+    );
+    rawTasks.push(...(tasksResponse.data ?? []));
+    offset = tasksResponse._response?.next_page?.offset;
+  } while (offset);
 
   const result: TaskData[] = [];
 
   for (const t of rawTasks) {
-    // Skip completed tasks
+    // Skip if somehow completed (shouldn't happen with completed_since: 'now')
     if (t.completed) continue;
 
     // Collect tag names

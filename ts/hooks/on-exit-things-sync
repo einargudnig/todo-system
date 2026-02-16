@@ -1,0 +1,8 @@
+#!/bin/bash
+# Taskwarrior on-exit hook for syncing completions to Things 3
+
+# Get absolute path to the ts directory
+TS_DIR="/Users/einargudjonsson/personal/todo-system/ts"
+
+# Pass stdin through to the TypeScript hook
+cd "$TS_DIR" && exec npx tsx src/hook-on-exit.ts

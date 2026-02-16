@@ -19,6 +19,7 @@ export interface Config {
   };
   things: {
     enabled: boolean;
+    auth_token: string;
     areas: string[];
   };
   sync: {

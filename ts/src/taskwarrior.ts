@@ -8,6 +8,8 @@ const REQUIRED_UDAS: Record<string, { type: string; label: string }> = {
   things3_uuid: { type: "string", label: "Things 3 UUID" },
   asana_gid: { type: "string", label: "Asana GID" },
   source: { type: "string", label: "Sync source" },
+  things3_synced: { type: "string", label: "Synced back to Things" },
+  asana_synced: { type: "string", label: "Synced back to Asana" },
 };
 
 function runTaskConfig(key: string, value: string): void {
@@ -103,7 +105,7 @@ export function upsertTask(
 
     // Check tags
     const existingTags = (existing["tags"] as string[]) ?? [];
-    const newTags = taskData.tags ?? [];
+    const newTags = (taskData.tags ?? []).map(t => t.replace(/\s+/g, "_"));
     if (JSON.stringify(existingTags.sort()) !== JSON.stringify(newTags.sort())) {
       updates.push(`tags:${newTags.join(",")}`);
       changed = true;
@@ -125,7 +127,9 @@ export function upsertTask(
 
   if (taskData.tags && taskData.tags.length > 0) {
     for (const tag of taskData.tags) {
-      parts.push(`+${tag}`);
+      // Taskwarrior doesn't allow spaces in tags - replace with underscores
+      const sanitizedTag = tag.replace(/\s+/g, "_");
+      parts.push(`+${sanitizedTag}`);
     }
   }
   if (taskData.project) {

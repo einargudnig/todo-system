@@ -8,19 +8,39 @@
 
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import Database from "better-sqlite3";
 import { buildTaskData } from "./taskwarrior.js";
 import type { Config, TaskData } from "./types.js";
 
-const THINGS_DB_PATH = join(
+const THINGS_CONTAINER = join(
   homedir(),
   "Library",
   "Group Containers",
   "JLMPQHK86H.com.culturedcode.ThingsMac",
-  "Things Database.thingsdatabase",
-  "main.sqlite",
 );
+
+function findThingsDbPath(): string {
+  // First try the direct path (older Things versions)
+  const directPath = join(THINGS_CONTAINER, "Things Database.thingsdatabase", "main.sqlite");
+  if (existsSync(directPath)) return directPath;
+
+  // Search for ThingsData-* subfolder (newer Things versions)
+  if (existsSync(THINGS_CONTAINER)) {
+    const entries = readdirSync(THINGS_CONTAINER);
+    for (const entry of entries) {
+      if (entry.startsWith("ThingsData-")) {
+        const nestedPath = join(THINGS_CONTAINER, entry, "Things Database.thingsdatabase", "main.sqlite");
+        if (existsSync(nestedPath)) return nestedPath;
+      }
+    }
+  }
+
+  throw new Error(
+    `Things 3 database not found in ${THINGS_CONTAINER}. ` +
+      "Is Things 3 installed on this Mac?",
+  );
+}
 
 interface ThingsRow {
   uuid: string;
@@ -37,14 +57,8 @@ interface ThingsRow {
  * This mirrors what things.py does internally.
  */
 function queryThingsTodos(areaFilter: string[]): ThingsRow[] {
-  if (!existsSync(THINGS_DB_PATH)) {
-    throw new Error(
-      `Things 3 database not found at ${THINGS_DB_PATH}. ` +
-        "Is Things 3 installed on this Mac?",
-    );
-  }
-
-  const db = new Database(THINGS_DB_PATH, { readonly: true });
+  const dbPath = findThingsDbPath();
+  const db = new Database(dbPath, { readonly: true });
 
   try {
     // TMTask.status: 0 = incomplete, 3 = completed, 2 = cancelled
@@ -58,7 +72,7 @@ function queryThingsTodos(areaFilter: string[]): ThingsRow[] {
         t.title,
         t.notes,
         CASE WHEN t.deadline IS NOT NULL
-          THEN date(t.deadline, 'unixepoch', '+31 years')
+          THEN date('2021-01-01', '+' || (t.deadline / 86400) || ' days')
           ELSE NULL
         END AS deadline,
         p.title AS project_title,

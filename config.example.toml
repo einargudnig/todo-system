@@ -5,6 +5,9 @@ personal_access_token = "YOUR_TOKEN_HERE"
 
 [things]
 enabled = true
+# Authentication token for Things URL scheme (required for completing tasks)
+# Find it in Things → Settings → General → Enable "Things URLs"
+auth_token = ""
 # Optional: only sync specific areas. Empty list = all areas.
 # areas = ["Work", "Personal"]
 
