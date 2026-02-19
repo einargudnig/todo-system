@@ -105,13 +105,10 @@ function queryThingsTodos(areaFilter: string[]): ThingsRow[] {
   }
 }
 
-export function fetchThingsTasks(config: Config): TaskData[] {
-  const thingsCfg = config.things;
-  const syncCfg = config.sync;
-  const sourceTag = syncCfg.things_tag;
-  const areaFilter = thingsCfg.areas ?? [];
-
-  const rows = queryThingsTodos(areaFilter);
+export function transformThingsRows(
+  rows: ThingsRow[],
+  sourceTag: string,
+): TaskData[] {
   const result: TaskData[] = [];
 
   for (const row of rows) {
@@ -141,4 +138,14 @@ export function fetchThingsTasks(config: Config): TaskData[] {
   }
 
   return result;
+}
+
+export function fetchThingsTasks(config: Config): TaskData[] {
+  const thingsCfg = config.things;
+  const syncCfg = config.sync;
+  const sourceTag = syncCfg.things_tag;
+  const areaFilter = thingsCfg.areas ?? [];
+
+  const rows = queryThingsTodos(areaFilter);
+  return transformThingsRows(rows, sourceTag);
 }
