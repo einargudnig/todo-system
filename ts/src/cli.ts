@@ -13,8 +13,8 @@ import { ensureUdas, upsertTask } from "./taskwarrior.js";
 import { fetchThingsTasks } from "./things-reader.js";
 import { fetchAsanaTasks } from "./asana-reader.js";
 import { filterTasks } from "./ollama-filter.js";
-import { syncCompletionsToThings } from "./things-writer.js";
-import { syncCompletionsToAsana } from "./asana-writer.js";
+import { syncCompletionsToThings, findCompletedThingsTasks, isAlreadySyncedToThings } from "./things-writer.js";
+import { syncCompletionsToAsana, findCompletedAsanaTasks, isAlreadySyncedToAsana } from "./asana-writer.js";
 import type { Config, TaskData, UpsertAction } from "./types.js";
 
 const program = new Command();
@@ -22,7 +22,8 @@ const program = new Command();
 program
   .name("todo-sync-ts")
   .description("One-way sync from Things 3 and Asana into Taskwarrior.")
-  .version("0.1.0");
+  .version("0.1.0")
+  .option("--dry-run", "Show what would happen without making changes");
 
 // ─── setup ─────────────────────────────────────────────────────────
 program
@@ -73,7 +74,7 @@ async function syncSource(
   fetchFn: (config: Config) => TaskData[] | Promise<TaskData[]>,
   externalIdField: "things3_uuid" | "asana_gid",
   config: Config,
-  opts: { useOllama?: boolean } = {},
+  opts: { useOllama?: boolean; dryRun?: boolean } = {},
 ): Promise<void> {
   console.log(`Syncing from ${name}...`);
 
@@ -112,6 +113,14 @@ async function syncSource(
     }
   }
 
+  if (opts.dryRun) {
+    for (const taskData of tasks) {
+      console.log(`  [dry-run] Would sync: "${taskData.description}"`);
+    }
+    console.log(`  ${name}: ${tasks.length} tasks would be synced`);
+    return;
+  }
+
   const counts: Record<UpsertAction, number> = {
     created: 0,
     updated: 0,
@@ -135,11 +144,39 @@ async function syncSource(
   console.log(summary);
 }
 
+// ─── dry-run push helpers ─────────────────────────────────────────
+function dryRunPushThings(): void {
+  console.log("Checking completions for Things 3...");
+  const completed = findCompletedThingsTasks();
+  let count = 0;
+  for (const task of completed) {
+    if (!isAlreadySyncedToThings(task.uuid)) {
+      console.log(`  [dry-run] Would complete in Things 3: "${task.description}"`);
+      count++;
+    }
+  }
+  console.log(`  ${count} tasks would be completed in Things 3`);
+}
+
+function dryRunPushAsana(): void {
+  console.log("Checking completions for Asana...");
+  const completed = findCompletedAsanaTasks();
+  let count = 0;
+  for (const task of completed) {
+    if (!isAlreadySyncedToAsana(task.uuid)) {
+      console.log(`  [dry-run] Would complete in Asana: "${task.description}"`);
+      count++;
+    }
+  }
+  console.log(`  ${count} tasks would be completed in Asana`);
+}
+
 // ─── things ────────────────────────────────────────────────────────
 program
   .command("things")
   .description("Import tasks from Things 3")
   .action(async () => {
+    const dryRun = program.opts().dryRun as boolean | undefined;
     const config = loadConfig();
     if (!config.things.enabled) {
       console.log("Things 3 sync is disabled in config.");
@@ -147,6 +184,7 @@ program
     }
     await syncSource("Things 3", fetchThingsTasks, "things3_uuid", config, {
       useOllama: true,
+      dryRun,
     });
   });
 
@@ -155,8 +193,11 @@ program
   .command("asana")
   .description("Import tasks from Asana")
   .action(async () => {
+    const dryRun = program.opts().dryRun as boolean | undefined;
     const config = loadConfig();
-    await syncSource("Asana", fetchAsanaTasks, "asana_gid", config);
+    await syncSource("Asana", fetchAsanaTasks, "asana_gid", config, {
+      dryRun,
+    });
   });
 
 // ─── all ───────────────────────────────────────────────────────────
@@ -164,11 +205,13 @@ program
   .command("all")
   .description("Import tasks from both Things 3 and Asana")
   .action(async () => {
+    const dryRun = program.opts().dryRun as boolean | undefined;
     const config = loadConfig();
 
     if (config.things.enabled) {
       await syncSource("Things 3", fetchThingsTasks, "things3_uuid", config, {
         useOllama: true,
+        dryRun,
       });
     } else {
       console.log("Things 3 sync is disabled in config, skipping.");
@@ -176,7 +219,9 @@ program
 
     const token = config.asana.personal_access_token;
     if (token && token !== "YOUR_TOKEN_HERE") {
-      await syncSource("Asana", fetchAsanaTasks, "asana_gid", config);
+      await syncSource("Asana", fetchAsanaTasks, "asana_gid", config, {
+        dryRun,
+      });
     } else {
       console.log("Asana not configured, skipping.");
     }
@@ -187,23 +232,32 @@ program
   .command("push")
   .description("Push completed tasks back to Things 3 and Asana")
   .action(async () => {
+    const dryRun = program.opts().dryRun as boolean | undefined;
     const config = loadConfig();
 
     // Push to Things 3
     if (config.things.enabled) {
-      console.log("Syncing completions back to Things 3...");
-      const { synced, skipped } = syncCompletionsToThings();
-      console.log(`  Completed ${synced} tasks in Things 3 (${skipped} already synced)`);
+      if (dryRun) {
+        dryRunPushThings();
+      } else {
+        console.log("Syncing completions back to Things 3...");
+        const { synced, skipped } = syncCompletionsToThings();
+        console.log(`  Completed ${synced} tasks in Things 3 (${skipped} already synced)`);
+      }
     }
 
     // Push to Asana
     const token = config.asana.personal_access_token;
     if (token && token !== "YOUR_TOKEN_HERE") {
-      console.log("Syncing completions back to Asana...");
-      const { synced, skipped, errors } = await syncCompletionsToAsana();
-      let msg = `  Completed ${synced} tasks in Asana (${skipped} already synced)`;
-      if (errors > 0) msg += `, ${errors} errors`;
-      console.log(msg);
+      if (dryRun) {
+        dryRunPushAsana();
+      } else {
+        console.log("Syncing completions back to Asana...");
+        const { synced, skipped, errors } = await syncCompletionsToAsana();
+        let msg = `  Completed ${synced} tasks in Asana (${skipped} already synced)`;
+        if (errors > 0) msg += `, ${errors} errors`;
+        console.log(msg);
+      }
     }
   });
 
@@ -212,9 +266,14 @@ program
   .command("push-things")
   .description("Push completed tasks back to Things 3 only")
   .action(async () => {
-    console.log("Syncing completions back to Things 3...");
-    const { synced, skipped } = syncCompletionsToThings();
-    console.log(`  Completed ${synced} tasks in Things 3 (${skipped} already synced)`);
+    const dryRun = program.opts().dryRun as boolean | undefined;
+    if (dryRun) {
+      dryRunPushThings();
+    } else {
+      console.log("Syncing completions back to Things 3...");
+      const { synced, skipped } = syncCompletionsToThings();
+      console.log(`  Completed ${synced} tasks in Things 3 (${skipped} already synced)`);
+    }
   });
 
 // ─── push-asana ────────────────────────────────────────────────────
@@ -222,11 +281,16 @@ program
   .command("push-asana")
   .description("Push completed tasks back to Asana only")
   .action(async () => {
-    console.log("Syncing completions back to Asana...");
-    const { synced, skipped, errors } = await syncCompletionsToAsana();
-    let msg = `  Completed ${synced} tasks in Asana (${skipped} already synced)`;
-    if (errors > 0) msg += `, ${errors} errors`;
-    console.log(msg);
+    const dryRun = program.opts().dryRun as boolean | undefined;
+    if (dryRun) {
+      dryRunPushAsana();
+    } else {
+      console.log("Syncing completions back to Asana...");
+      const { synced, skipped, errors } = await syncCompletionsToAsana();
+      let msg = `  Completed ${synced} tasks in Asana (${skipped} already synced)`;
+      if (errors > 0) msg += `, ${errors} errors`;
+      console.log(msg);
+    }
   });
 
 // ─── sync ──────────────────────────────────────────────────────────
@@ -234,35 +298,47 @@ program
   .command("sync")
   .description("Full bi-directional sync: pull from Things 3 & Asana, push completions back")
   .action(async () => {
+    const dryRun = program.opts().dryRun as boolean | undefined;
     const config = loadConfig();
 
     // Pull from Things
     if (config.things.enabled) {
       await syncSource("Things 3", fetchThingsTasks, "things3_uuid", config, {
         useOllama: true,
+        dryRun,
       });
     }
 
     // Pull from Asana
     const token = config.asana.personal_access_token;
     if (token && token !== "YOUR_TOKEN_HERE") {
-      await syncSource("Asana", fetchAsanaTasks, "asana_gid", config);
+      await syncSource("Asana", fetchAsanaTasks, "asana_gid", config, {
+        dryRun,
+      });
     }
 
     // Push completions back to Things
     if (config.things.enabled) {
-      console.log("\nSyncing completions back to Things 3...");
-      const { synced, skipped } = syncCompletionsToThings();
-      console.log(`  Completed ${synced} tasks in Things 3 (${skipped} already synced)`);
+      if (dryRun) {
+        dryRunPushThings();
+      } else {
+        console.log("\nSyncing completions back to Things 3...");
+        const { synced, skipped } = syncCompletionsToThings();
+        console.log(`  Completed ${synced} tasks in Things 3 (${skipped} already synced)`);
+      }
     }
 
     // Push completions back to Asana
     if (token && token !== "YOUR_TOKEN_HERE") {
-      console.log("\nSyncing completions back to Asana...");
-      const { synced, skipped, errors } = await syncCompletionsToAsana();
-      let msg = `  Completed ${synced} tasks in Asana (${skipped} already synced)`;
-      if (errors > 0) msg += `, ${errors} errors`;
-      console.log(msg);
+      if (dryRun) {
+        dryRunPushAsana();
+      } else {
+        console.log("\nSyncing completions back to Asana...");
+        const { synced, skipped, errors } = await syncCompletionsToAsana();
+        let msg = `  Completed ${synced} tasks in Asana (${skipped} already synced)`;
+        if (errors > 0) msg += `, ${errors} errors`;
+        console.log(msg);
+      }
     }
   });
 
