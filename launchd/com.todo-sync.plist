@@ -8,8 +8,9 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/einargudjonsson/personal/todo-system/.venv/bin/todo-sync</string>
-        <string>all</string>
+        <string>/usr/local/bin/node</string>
+        <string>/Users/einargudjonsson/personal/todo-system/ts/dist/cli.js</string>
+        <string>sync</string>
     </array>
 
     <key>StartInterval</key>
