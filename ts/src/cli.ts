@@ -192,14 +192,21 @@ function dryRunPushThings(): void {
 function dryRunPushAsana(): void {
   console.log("Checking completions for Asana...");
   const completed = findCompletedAsanaTasks();
-  let count = 0;
+  let taskCount = 0;
+  let subtaskCount = 0;
   for (const task of completed) {
     if (!isAlreadySyncedToAsana(task.uuid)) {
-      console.log(`  [dry-run] Would complete in Asana: "${task.description}"`);
-      count++;
+      const kind = task.asana_parent_gid ? "subtask" : "task";
+      console.log(`  [dry-run] Would complete ${kind} in Asana: "${task.description}"`);
+      if (task.asana_parent_gid) {
+        subtaskCount++;
+      } else {
+        taskCount++;
+      }
     }
   }
-  console.log(`  ${count} tasks would be completed in Asana`);
+  const total = taskCount + subtaskCount;
+  console.log(`  ${total} would be completed in Asana (${taskCount} tasks, ${subtaskCount} subtasks)`);
 }
 
 // ─── things ────────────────────────────────────────────────────────

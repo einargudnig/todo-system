@@ -112,6 +112,12 @@ export function upsertTask(
       changed = true;
     }
 
+    // Backfill asana_parent_gid if missing
+    if (taskData.parentAsanaGid && !existing["asana_parent_gid"]) {
+      updates.push(`asana_parent_gid:${JSON.stringify(taskData.parentAsanaGid)}`);
+      changed = true;
+    }
+
     // Add any new annotations not already present
     const existingAnnotations = (
       existing["annotations"] as Array<{ description?: string }> | undefined
@@ -156,6 +162,9 @@ export function upsertTask(
   }
   if (taskData.priority) {
     parts.push(`priority:${taskData.priority}`);
+  }
+  if (taskData.parentAsanaGid) {
+    parts.push(`asana_parent_gid:${JSON.stringify(taskData.parentAsanaGid)}`);
   }
 
   const output = runTask(`add ${parts.join(" ")}`);

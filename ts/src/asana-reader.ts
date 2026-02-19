@@ -19,6 +19,26 @@ const OPT_FIELDS = [
 const SUBTASK_OPT_FIELDS = "gid,name,completed,due_on,notes";
 const STORY_OPT_FIELDS = "text,created_by,created_by.name,type,created_at";
 
+async function processInPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const i = nextIndex++;
+      results[i] = await fn(items[i]);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 async function getWorkspaceGid(
   workspacesApi: asana.WorkspacesApi,
   configured: string,
@@ -102,18 +122,17 @@ export async function fetchAsanaTasks(config: Config): Promise<TaskData[]> {
     offset = tasksResponse._response?.next_page?.offset;
   } while (offset);
 
-  const result: TaskData[] = [];
-  const allSubtasks: TaskData[] = [];
+  // Filter out completed tasks upfront
+  const incompleteTasks = rawTasks.filter(t => !t.completed);
 
-  for (let i = 0; i < rawTasks.length; i++) {
-    const t = rawTasks[i];
+  let processed = 0;
 
-    // Skip if somehow completed (shouldn't happen with completed_since: 'now')
-    if (t.completed) continue;
-
+  // Process tasks in parallel with concurrency limit
+  const taskResults = await processInPool(incompleteTasks, 5, async (t) => {
+    const i = processed++;
     // Log progress every 10 tasks
     if (i % 10 === 0) {
-      console.log(`  Fetching details for task ${i + 1}/${rawTasks.length}...`);
+      console.log(`  Fetching details for task ${i + 1}/${incompleteTasks.length}...`);
     }
 
     // Collect tag names
@@ -135,25 +154,25 @@ export async function fetchAsanaTasks(config: Config): Promise<TaskData[]> {
       }
     }
 
-    // Build annotations from notes
+    // Fetch stories and subtasks in parallel
+    const [stories, subtasks] = await Promise.all([
+      storiesApi.getStoriesForTask(t.gid, {
+        opt_fields: STORY_OPT_FIELDS,
+      }).then(r => r.data ?? []).catch(() => []),
+      tasksApi.getSubtasksForTask(t.gid, {
+        opt_fields: SUBTASK_OPT_FIELDS,
+      }).then(r => r.data ?? []).catch(() => []),
+    ]);
+
+    // Build annotations from notes + comments
     const annotations: string[] = [];
     if (t.notes) annotations.push(t.notes);
-
-    // Fetch comments (stories) for this task
-    try {
-      const storiesResponse = await storiesApi.getStoriesForTask(t.gid, {
-        opt_fields: STORY_OPT_FIELDS,
-      });
-      const stories = storiesResponse.data ?? [];
-      for (const story of stories) {
-        if (story.type === "comment" && story.text) {
-          const author = story.created_by?.name ?? "Unknown";
-          const commentText = `[${author}] ${story.text}`.slice(0, 1000);
-          annotations.push(commentText);
-        }
+    for (const story of stories) {
+      if (story.type === "comment" && story.text) {
+        const author = story.created_by?.name ?? "Unknown";
+        const commentText = `[${author}] ${story.text}`.slice(0, 1000);
+        annotations.push(commentText);
       }
-    } catch {
-      // Non-fatal: continue without comments
     }
 
     const taskData = buildTaskData({
@@ -168,34 +187,33 @@ export async function fetchAsanaTasks(config: Config): Promise<TaskData[]> {
       annotations,
     });
 
-    result.push(taskData);
-
-    // Fetch subtasks for this task
-    try {
-      const subtasksResponse = await tasksApi.getSubtasksForTask(t.gid, {
-        opt_fields: SUBTASK_OPT_FIELDS,
+    // Build subtask data
+    const subTaskDataList: TaskData[] = [];
+    for (const sub of subtasks) {
+      if (sub.completed) continue;
+      const subTaskData = buildTaskData({
+        description: sub.name,
+        externalIdField: "asana_gid",
+        externalId: sub.gid,
+        source: "asana",
+        sourceTag,
+        project: projectName,
+        due: sub.due_on ?? undefined,
+        tags,
+        annotations: sub.notes ? [sub.notes] : undefined,
       });
-      const subtasks = subtasksResponse.data ?? [];
-      for (const sub of subtasks) {
-        if (sub.completed) continue;
-
-        const subTaskData = buildTaskData({
-          description: sub.name,
-          externalIdField: "asana_gid",
-          externalId: sub.gid,
-          source: "asana",
-          sourceTag,
-          project: projectName,
-          due: sub.due_on ?? undefined,
-          tags,
-          annotations: sub.notes ? [sub.notes] : undefined,
-        });
-        subTaskData.parentAsanaGid = t.gid;
-        allSubtasks.push(subTaskData);
-      }
-    } catch {
-      // Non-fatal: continue without subtasks
+      subTaskData.parentAsanaGid = t.gid;
+      subTaskDataList.push(subTaskData);
     }
+
+    return { parent: taskData, subtasks: subTaskDataList };
+  });
+
+  const result: TaskData[] = [];
+  const allSubtasks: TaskData[] = [];
+  for (const { parent, subtasks } of taskResults) {
+    result.push(parent);
+    allSubtasks.push(...subtasks);
   }
 
   return [...result, ...allSubtasks];

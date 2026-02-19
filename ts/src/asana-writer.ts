@@ -6,11 +6,12 @@ import { execSync } from "node:child_process";
 import * as asana from "asana";
 import { loadConfig } from "./config.js";
 
-interface CompletedTask {
+export interface CompletedTask {
   uuid: string;
   asana_gid: string;
   description: string;
   end: string;
+  asana_parent_gid?: string;
 }
 
 /**
@@ -28,12 +29,13 @@ export function findCompletedAsanaTasks(): CompletedTask[] {
     const tasks = JSON.parse(output) as Array<{
       uuid: string;
       asana_gid?: string;
+      asana_parent_gid?: string;
       description: string;
       end?: string;
     }>;
-    
+
     return tasks
-      .filter((t): t is CompletedTask & { asana_gid: string } => 
+      .filter((t): t is typeof t & { asana_gid: string; end: string } =>
         !!t.asana_gid && !!t.end
       )
       .map(t => ({
@@ -41,6 +43,7 @@ export function findCompletedAsanaTasks(): CompletedTask[] {
         asana_gid: t.asana_gid,
         description: t.description,
         end: t.end,
+        asana_parent_gid: t.asana_parent_gid,
       }));
   } catch {
     return [];
@@ -112,7 +115,8 @@ export async function syncCompletionsToAsana(): Promise<{ synced: number; skippe
     }
     
     try {
-      console.log(`  Completing in Asana: ${task.description}`);
+      const kind = task.asana_parent_gid ? "subtask" : "task";
+      console.log(`  Completing ${kind} in Asana: ${task.description}`);
       await completeInAsana(task.asana_gid);
       markAsSyncedToAsana(task.uuid);
       synced++;
