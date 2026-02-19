@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, symlinkSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, configExists, createDefaultConfig } from "./config.js";
-import { ensureUdas, upsertTask } from "./taskwarrior.js";
+import { ensureUdas, upsertTask, setDependency } from "./taskwarrior.js";
 import { fetchThingsTasks } from "./things-reader.js";
 import { fetchAsanaTasks } from "./asana-reader.js";
 import { filterTasks } from "./ollama-filter.js";
@@ -115,7 +115,11 @@ async function syncSource(
 
   if (opts.dryRun) {
     for (const taskData of tasks) {
-      console.log(`  [dry-run] Would sync: "${taskData.description}"`);
+      const prefix = taskData.parentAsanaGid ? "  subtask" : "  task";
+      console.log(`  [dry-run] Would sync${prefix}: "${taskData.description}"`);
+      if (taskData.parentAsanaGid) {
+        console.log(`    [dry-run] Would link subtask "${taskData.description}" to parent "${taskData.parentAsanaGid}"`);
+      }
     }
     console.log(`  ${name}: ${tasks.length} tasks would be synced`);
     return;
@@ -127,11 +131,38 @@ async function syncSource(
     skipped: 0,
   };
 
+  // Map asana GID → taskwarrior UUID for dependency linking
+  const gidToUuid = new Map<string, string>();
+
   for (const taskData of tasks) {
     const externalId = taskData[externalIdField];
     if (!externalId) continue;
-    const [action] = upsertTask(externalIdField, externalId, taskData);
+    const [action, uuid] = upsertTask(externalIdField, externalId, taskData);
     counts[action]++;
+    if (uuid) {
+      gidToUuid.set(externalId, uuid);
+    }
+  }
+
+  // Link subtasks to their parents via depends:
+  let linkedCount = 0;
+  for (const taskData of tasks) {
+    if (!taskData.parentAsanaGid) continue;
+    const childGid = taskData[externalIdField];
+    if (!childGid) continue;
+    const childUuid = gidToUuid.get(childGid);
+    const parentUuid = gidToUuid.get(taskData.parentAsanaGid);
+    if (childUuid && parentUuid) {
+      try {
+        setDependency(childUuid, parentUuid);
+        linkedCount++;
+      } catch {
+        // Non-fatal: continue without linking
+      }
+    }
+  }
+  if (linkedCount > 0) {
+    console.log(`  Linked ${linkedCount} subtasks to their parents`);
   }
 
   let summary =

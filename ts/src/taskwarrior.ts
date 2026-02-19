@@ -10,6 +10,7 @@ const REQUIRED_UDAS: Record<string, { type: string; label: string }> = {
   source: { type: "string", label: "Sync source" },
   things3_synced: { type: "string", label: "Synced back to Things" },
   asana_synced: { type: "string", label: "Synced back to Asana" },
+  asana_parent_gid: { type: "string", label: "Asana Parent GID" },
 };
 
 function runTaskConfig(key: string, value: string): void {
@@ -111,8 +112,23 @@ export function upsertTask(
       changed = true;
     }
 
+    // Add any new annotations not already present
+    const existingAnnotations = (
+      existing["annotations"] as Array<{ description?: string }> | undefined
+    ) ?? [];
+    const existingTexts = new Set(existingAnnotations.map(a => a.description));
+    for (const note of annotations) {
+      const trimmed = note?.trim().slice(0, 1000);
+      if (trimmed && !existingTexts.has(trimmed)) {
+        runTask(`${existing.uuid} annotate ${JSON.stringify(trimmed)}`);
+        changed = true;
+      }
+    }
+
     if (changed) {
-      runTask(`${existing.uuid} modify ${updates.join(" ")}`);
+      if (updates.length > 0) {
+        runTask(`${existing.uuid} modify ${updates.join(" ")}`);
+      }
       return ["updated", existing.uuid];
     }
     return ["skipped", existing.uuid];
@@ -159,6 +175,10 @@ export function upsertTask(
   }
 
   return ["created", uuid];
+}
+
+export function setDependency(childUuid: string, parentUuid: string): void {
+  runTask(`${childUuid} modify depends:${parentUuid}`);
 }
 
 export function buildTaskData(opts: {

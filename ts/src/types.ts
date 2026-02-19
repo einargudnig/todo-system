@@ -10,6 +10,7 @@ export interface TaskData {
   due?: string; // ISO date string YYYY-MM-DD
   priority?: "H" | "M" | "L";
   annotations?: string[];
+  parentAsanaGid?: string;
 }
 
 export interface Config {

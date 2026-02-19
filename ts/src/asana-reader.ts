@@ -16,6 +16,9 @@ const OPT_FIELDS = [
   "notes",
 ];
 
+const SUBTASK_OPT_FIELDS = "gid,name,completed,due_on,notes";
+const STORY_OPT_FIELDS = "text,created_by,created_by.name,type,created_at";
+
 async function getWorkspaceGid(
   workspacesApi: asana.WorkspacesApi,
   configured: string,
@@ -58,6 +61,7 @@ export async function fetchAsanaTasks(config: Config): Promise<TaskData[]> {
   const workspacesApi = new asana.WorkspacesApi(client);
   const userTaskListsApi = new asana.UserTaskListsApi(client);
   const tasksApi = new asana.TasksApi(client);
+  const storiesApi = new asana.StoriesApi(client);
 
   const workspaceGid = await getWorkspaceGid(
     workspacesApi,
@@ -99,10 +103,18 @@ export async function fetchAsanaTasks(config: Config): Promise<TaskData[]> {
   } while (offset);
 
   const result: TaskData[] = [];
+  const allSubtasks: TaskData[] = [];
 
-  for (const t of rawTasks) {
+  for (let i = 0; i < rawTasks.length; i++) {
+    const t = rawTasks[i];
+
     // Skip if somehow completed (shouldn't happen with completed_since: 'now')
     if (t.completed) continue;
+
+    // Log progress every 10 tasks
+    if (i % 10 === 0) {
+      console.log(`  Fetching details for task ${i + 1}/${rawTasks.length}...`);
+    }
 
     // Collect tag names
     const tags: string[] = [];
@@ -127,6 +139,23 @@ export async function fetchAsanaTasks(config: Config): Promise<TaskData[]> {
     const annotations: string[] = [];
     if (t.notes) annotations.push(t.notes);
 
+    // Fetch comments (stories) for this task
+    try {
+      const storiesResponse = await storiesApi.getStoriesForTask(t.gid, {
+        opt_fields: STORY_OPT_FIELDS,
+      });
+      const stories = storiesResponse.data ?? [];
+      for (const story of stories) {
+        if (story.type === "comment" && story.text) {
+          const author = story.created_by?.name ?? "Unknown";
+          const commentText = `[${author}] ${story.text}`.slice(0, 1000);
+          annotations.push(commentText);
+        }
+      }
+    } catch {
+      // Non-fatal: continue without comments
+    }
+
     const taskData = buildTaskData({
       description: t.name,
       externalIdField: "asana_gid",
@@ -140,7 +169,34 @@ export async function fetchAsanaTasks(config: Config): Promise<TaskData[]> {
     });
 
     result.push(taskData);
+
+    // Fetch subtasks for this task
+    try {
+      const subtasksResponse = await tasksApi.getSubtasksForTask(t.gid, {
+        opt_fields: SUBTASK_OPT_FIELDS,
+      });
+      const subtasks = subtasksResponse.data ?? [];
+      for (const sub of subtasks) {
+        if (sub.completed) continue;
+
+        const subTaskData = buildTaskData({
+          description: sub.name,
+          externalIdField: "asana_gid",
+          externalId: sub.gid,
+          source: "asana",
+          sourceTag,
+          project: projectName,
+          due: sub.due_on ?? undefined,
+          tags,
+          annotations: sub.notes ? [sub.notes] : undefined,
+        });
+        subTaskData.parentAsanaGid = t.gid;
+        allSubtasks.push(subTaskData);
+      }
+    } catch {
+      // Non-fatal: continue without subtasks
+    }
   }
 
-  return result;
+  return [...result, ...allSubtasks];
 }

@@ -406,6 +406,7 @@ describe("ensureUdas", () => {
       "uda.source.type",
       "uda.things3_synced.type",
       "uda.asana_synced.type",
+      "uda.asana_parent_gid.type",
     ].join("\n");
     mockExecSync.mockReturnValueOnce(existing as any);
 
