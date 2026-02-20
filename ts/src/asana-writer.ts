@@ -77,7 +77,7 @@ export async function completeInAsana(asanaGid: string): Promise<void> {
  */
 export function markAsSyncedToAsana(taskUuid: string): void {
   execSync(
-    `task rc.confirmation=off ${taskUuid} modify asana_synced:true`,
+    `task rc.confirmation=off rc.hooks=off ${taskUuid} modify asana_synced:true`,
     { stdio: 'pipe' }
   );
 }

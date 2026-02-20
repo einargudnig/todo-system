@@ -416,35 +416,43 @@ program
 // ─── install-hook ──────────────────────────────────────────────────
 program
   .command("install-hook")
-  .description("Install Taskwarrior hook for automatic Things 3 sync on completion")
+  .description("Install Taskwarrior hook for automatic sync on completion (Things 3 + Asana)")
   .action(() => {
     const homeDir = process.env.HOME || process.env.USERPROFILE || "";
     const taskHooksDir = join(homeDir, ".task", "hooks");
-    const hookName = "on-exit-things-sync";
+    const hookName = "on-exit-sync";
+    const legacyHookName = "on-exit-things-sync";
     const hookDest = join(taskHooksDir, hookName);
-    
+    const legacyHookDest = join(taskHooksDir, legacyHookName);
+
     // Get the source hook path (relative to this file)
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = dirname(__filename);
     const tsRoot = dirname(__dirname); // Go up from src/ to ts/
     const hookSrc = join(tsRoot, "hooks", hookName);
-    
+
     // Create hooks directory if needed
     if (!existsSync(taskHooksDir)) {
       mkdirSync(taskHooksDir, { recursive: true });
       console.log(`Created ${taskHooksDir}`);
     }
-    
+
+    // Remove legacy hook if present (migration)
+    if (existsSync(legacyHookDest)) {
+      unlinkSync(legacyHookDest);
+      console.log(`Removed legacy hook: ${legacyHookDest}`);
+    }
+
     // Remove existing hook if present
     if (existsSync(hookDest)) {
       unlinkSync(hookDest);
       console.log(`Removed existing hook at ${hookDest}`);
     }
-    
+
     // Create symlink
     symlinkSync(hookSrc, hookDest);
     console.log(`Installed hook: ${hookDest} -> ${hookSrc}`);
-    console.log("\n✓ Hook installed! Tasks completed in Taskwarrior will now auto-sync to Things 3.");
+    console.log("\n✓ Hook installed! Tasks completed in Taskwarrior will now auto-sync to Things 3 and Asana.");
   });
 
 // ─── uninstall-hook ────────────────────────────────────────────────
@@ -453,12 +461,24 @@ program
   .description("Remove the Taskwarrior hook")
   .action(() => {
     const homeDir = process.env.HOME || process.env.USERPROFILE || "";
-    const hookPath = join(homeDir, ".task", "hooks", "on-exit-things-sync");
-    
+    const taskHooksDir = join(homeDir, ".task", "hooks");
+    const hookPath = join(taskHooksDir, "on-exit-sync");
+    const legacyHookPath = join(taskHooksDir, "on-exit-things-sync");
+    let removed = false;
+
     if (existsSync(hookPath)) {
       unlinkSync(hookPath);
       console.log(`Removed hook: ${hookPath}`);
-    } else {
+      removed = true;
+    }
+
+    if (existsSync(legacyHookPath)) {
+      unlinkSync(legacyHookPath);
+      console.log(`Removed legacy hook: ${legacyHookPath}`);
+      removed = true;
+    }
+
+    if (!removed) {
       console.log("Hook not installed.");
     }
   });

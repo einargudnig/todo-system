@@ -1,21 +1,24 @@
 #!/usr/bin/env npx tsx
 /**
- * Taskwarrior on-exit hook for syncing completions to Things 3.
- * 
+ * Taskwarrior on-exit hook for syncing completions to Things 3 and Asana.
+ *
  * This hook runs after any task modification. If a task with a things3_uuid
- * is marked as completed, it will complete it in Things 3 as well.
- * 
- * Install: symlink to ~/.task/hooks/on-exit-things-sync
+ * or asana_gid is marked as completed, it will complete it in the source.
+ *
+ * Install: symlink to ~/.task/hooks/on-exit-sync
  */
 
 import { execSync } from "node:child_process";
 import { loadConfig } from "./config.js";
+import { completeInAsana, markAsSyncedToAsana } from "./asana-writer.js";
 
 interface TaskwarriorTask {
   uuid: string;
   status: string;
   things3_uuid?: string;
   things3_synced?: string;
+  asana_gid?: string;
+  asana_synced?: string;
   description: string;
 }
 
@@ -32,53 +35,71 @@ function markAsSyncedToThings(taskUuid: string): void {
 }
 
 async function main() {
-  // Load config to get auth token
-  let authToken = "";
+  // Load config
+  let thingsAuthToken = "";
+  let asanaConfigured = false;
   try {
     const config = loadConfig();
-    authToken = config.things.auth_token || "";
+    thingsAuthToken = config.things.auth_token || "";
+    const asanaToken = config.asana?.personal_access_token || "";
+    asanaConfigured = !!asanaToken && asanaToken !== "YOUR_TOKEN_HERE";
   } catch {
     // Config not found, skip syncing
     process.exit(0);
   }
-  
-  if (!authToken) {
-    // No auth token configured, skip silently
+
+  if (!thingsAuthToken && !asanaConfigured) {
+    // Nothing configured, skip silently
     process.exit(0);
   }
-  
+
   // Read all input from stdin (Taskwarrior sends JSON lines)
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) {
     chunks.push(chunk);
   }
   const input = Buffer.concat(chunks).toString('utf-8');
-  
+
   // Parse each line as a separate JSON task
   const lines = input.trim().split('\n').filter(Boolean);
-  
+
   for (const line of lines) {
     try {
       const task: TaskwarriorTask = JSON.parse(line);
-      
-      // Check if this is a completed task with a Things UUID that hasn't been synced
+
+      // Things 3: complete if task has a Things UUID
       if (
+        thingsAuthToken &&
         task.status === 'completed' &&
         task.things3_uuid &&
         task.things3_synced !== 'true'
       ) {
-        // Complete in Things 3
-        completeInThings(task.things3_uuid, authToken);
+        completeInThings(task.things3_uuid, thingsAuthToken);
         markAsSyncedToThings(task.uuid);
-        
-        // Output to stderr so user sees it (stdout is reserved for task JSON)
         console.error(`✓ Completed in Things 3: ${task.description}`);
+      }
+
+      // Asana: complete if task has an Asana GID
+      if (
+        asanaConfigured &&
+        task.status === 'completed' &&
+        task.asana_gid &&
+        task.asana_synced !== 'true'
+      ) {
+        try {
+          await completeInAsana(task.asana_gid);
+          markAsSyncedToAsana(task.uuid);
+          console.error(`✓ Completed in Asana: ${task.description}`);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error(`✗ Failed to complete in Asana: ${task.description} (${msg})`);
+        }
       }
     } catch {
       // Ignore parse errors for non-JSON lines
     }
   }
-  
+
   // Exit successfully
   process.exit(0);
 }

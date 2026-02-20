@@ -156,7 +156,7 @@ model = "lfm2.5-thinking"
 | `push-things` | Push completions to Things 3 only |
 | `push-asana` | Push completions to Asana only |
 | `sync` | Full round-trip: pull from both, push completions back |
-| `install-hook` | Install Taskwarrior on-exit hook for auto Things sync |
+| `install-hook` | Install Taskwarrior on-exit hook for auto sync (Things 3 + Asana) |
 | `uninstall-hook` | Remove the Taskwarrior hook |
 
 All commands support `--dry-run` to preview changes without making them:
@@ -203,7 +203,7 @@ tail -f /tmp/todo-sync.log
 
 ### Taskwarrior Hook
 
-The on-exit hook provides real-time sync — completing a task in Taskwarrior immediately marks it complete in Things 3:
+The on-exit hook provides real-time sync — completing a task in Taskwarrior immediately marks it complete in the source (Things 3 and/or Asana):
 
 ```bash
 todo-sync-ts install-hook    # symlinks to ~/.task/hooks/
@@ -220,7 +220,7 @@ todo-system/
     ├── package.json
     ├── tsconfig.json
     ├── hooks/
-    │   └── on-exit-things-sync      # TW hook (bash wrapper)
+    │   └── on-exit-sync              # TW hook (bash wrapper)
     └── src/
         ├── cli.ts                   # CLI entry point
         ├── config.ts                # TOML config management

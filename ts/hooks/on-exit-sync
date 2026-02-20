@@ -1,5 +1,5 @@
 #!/bin/bash
-# Taskwarrior on-exit hook for syncing completions to Things 3
+# Taskwarrior on-exit hook for syncing completions to Things 3 and Asana
 
 # Get absolute path to the ts directory
 TS_DIR="/Users/einargudjonsson/personal/todo-system/ts"
