@@ -39,6 +39,13 @@ async function processInPool<T, R>(
   return results;
 }
 
+function cleanProjectName(name: string): string {
+  return name
+    .replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}\u{FE0F}]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 async function getWorkspaceGid(
   workspacesApi: asana.WorkspacesApi,
   configured: string,
@@ -143,12 +150,12 @@ export async function fetchAsanaTasks(config: Config): Promise<TaskData[]> {
       }
     }
 
-    // Get first project name
-    let projectName: string | undefined;
+    // Get first project name, default to "Asana" for unassigned tasks
+    let projectName: string = "Asana";
     if (t.projects) {
       for (const p of t.projects) {
         if (p.name) {
-          projectName = p.name;
+          projectName = cleanProjectName(p.name);
           break;
         }
       }
@@ -191,6 +198,7 @@ export async function fetchAsanaTasks(config: Config): Promise<TaskData[]> {
     const subTaskDataList: TaskData[] = [];
     for (const sub of subtasks) {
       if (sub.completed) continue;
+      if (!sub.name || !sub.name.trim()) continue;
       const subTaskData = buildTaskData({
         description: sub.name,
         externalIdField: "asana_gid",
