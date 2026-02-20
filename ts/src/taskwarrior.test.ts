@@ -6,7 +6,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 import { execSync } from "node:child_process";
-import { buildTaskData, upsertTask, ensureUdas } from "./taskwarrior.js";
+import { buildTaskData, upsertTask, ensureUdas, findAllPendingBySource, completeTask } from "./taskwarrior.js";
 
 const mockExecSync = vi.mocked(execSync);
 
@@ -412,5 +412,90 @@ describe("ensureUdas", () => {
 
     const created = ensureUdas();
     expect(created).toEqual([]);
+  });
+});
+
+// ─── findAllPendingBySource ─────────────────────────────────────────────────
+
+describe("findAllPendingBySource", () => {
+  it("builds map from pending tasks", () => {
+    const tasks = [
+      { uuid: "uuid-1", description: "Task 1", asana_gid: "gid-1" },
+      { uuid: "uuid-2", description: "Task 2", asana_gid: "gid-2" },
+    ];
+    mockExecSync.mockReturnValueOnce(JSON.stringify(tasks) as any); // pending
+    mockExecSync.mockReturnValueOnce("" as any); // waiting
+
+    const result = findAllPendingBySource("asana_gid");
+    expect(result.size).toBe(2);
+    expect(result.get("gid-1")).toBe("uuid-1");
+    expect(result.get("gid-2")).toBe("uuid-2");
+  });
+
+  it("combines pending and waiting tasks", () => {
+    const pending = [{ uuid: "uuid-1", description: "Pending", asana_gid: "gid-1" }];
+    const waiting = [{ uuid: "uuid-2", description: "Waiting", asana_gid: "gid-2" }];
+    mockExecSync.mockReturnValueOnce(JSON.stringify(pending) as any);
+    mockExecSync.mockReturnValueOnce(JSON.stringify(waiting) as any);
+
+    const result = findAllPendingBySource("asana_gid");
+    expect(result.size).toBe(2);
+    expect(result.get("gid-1")).toBe("uuid-1");
+    expect(result.get("gid-2")).toBe("uuid-2");
+  });
+
+  it("returns empty map when no tasks found", () => {
+    mockExecSync.mockReturnValueOnce("" as any);
+    mockExecSync.mockReturnValueOnce("" as any);
+
+    const result = findAllPendingBySource("asana_gid");
+    expect(result.size).toBe(0);
+  });
+
+  it("handles invalid JSON gracefully", () => {
+    mockExecSync.mockReturnValueOnce("not json" as any);
+    mockExecSync.mockReturnValueOnce("also bad" as any);
+
+    const result = findAllPendingBySource("asana_gid");
+    expect(result.size).toBe(0);
+  });
+
+  it("skips tasks missing the external ID field", () => {
+    const tasks = [
+      { uuid: "uuid-1", description: "Has GID", asana_gid: "gid-1" },
+      { uuid: "uuid-2", description: "No GID" },
+    ];
+    mockExecSync.mockReturnValueOnce(JSON.stringify(tasks) as any);
+    mockExecSync.mockReturnValueOnce("" as any);
+
+    const result = findAllPendingBySource("asana_gid");
+    expect(result.size).toBe(1);
+    expect(result.get("gid-1")).toBe("uuid-1");
+  });
+
+  it("works with things3_uuid field", () => {
+    const tasks = [
+      { uuid: "uuid-1", description: "Things task", things3_uuid: "t3-abc" },
+    ];
+    mockExecSync.mockReturnValueOnce(JSON.stringify(tasks) as any);
+    mockExecSync.mockReturnValueOnce("" as any);
+
+    const result = findAllPendingBySource("things3_uuid");
+    expect(result.size).toBe(1);
+    expect(result.get("t3-abc")).toBe("uuid-1");
+  });
+});
+
+// ─── completeTask ───────────────────────────────────────────────────────────
+
+describe("completeTask", () => {
+  it("runs task done command with the UUID", () => {
+    mockExecSync.mockReturnValueOnce("" as any);
+
+    completeTask("550e8400-e29b-41d4-a716-446655440000");
+
+    const call = mockExecSync.mock.calls[0][0] as string;
+    expect(call).toContain("550e8400-e29b-41d4-a716-446655440000");
+    expect(call).toContain("done");
   });
 });

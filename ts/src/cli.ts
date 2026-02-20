@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, symlinkSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, configExists, createDefaultConfig } from "./config.js";
-import { ensureUdas, upsertTask, setDependency } from "./taskwarrior.js";
+import { ensureUdas, upsertTask, setDependency, findAllPendingBySource, completeTask } from "./taskwarrior.js";
 import { fetchThingsTasks } from "./things-reader.js";
 import { fetchAsanaTasks } from "./asana-reader.js";
 import { filterTasks } from "./ollama-filter.js";
@@ -78,6 +78,11 @@ async function syncSource(
 ): Promise<void> {
   console.log(`Syncing from ${name}...`);
 
+  const createdUdas = ensureUdas();
+  if (createdUdas.length > 0) {
+    console.log(`  Created missing UDAs: ${createdUdas.join(", ")}`);
+  }
+
   let tasks: TaskData[];
   try {
     tasks = await fetchFn(config);
@@ -88,6 +93,13 @@ async function syncSource(
   }
 
   console.log(`  Fetched ${tasks.length} tasks from ${name}`);
+
+  // Capture all fetched external IDs BEFORE Ollama filtering for stale detection
+  const fetchedExternalIds = new Set<string>();
+  for (const t of tasks) {
+    const extId = t[externalIdField];
+    if (extId) fetchedExternalIds.add(extId);
+  }
 
   // Optionally filter through Ollama
   let filteredOut = 0;
@@ -122,57 +134,78 @@ async function syncSource(
       }
     }
     console.log(`  ${name}: ${tasks.length} tasks would be synced`);
-    return;
-  }
+  } else {
+    const counts: Record<UpsertAction, number> = {
+      created: 0,
+      updated: 0,
+      skipped: 0,
+    };
 
-  const counts: Record<UpsertAction, number> = {
-    created: 0,
-    updated: 0,
-    skipped: 0,
-  };
+    // Map asana GID → taskwarrior UUID for dependency linking
+    const gidToUuid = new Map<string, string>();
 
-  // Map asana GID → taskwarrior UUID for dependency linking
-  const gidToUuid = new Map<string, string>();
-
-  for (const taskData of tasks) {
-    const externalId = taskData[externalIdField];
-    if (!externalId) continue;
-    const [action, uuid] = upsertTask(externalIdField, externalId, taskData);
-    counts[action]++;
-    if (uuid) {
-      gidToUuid.set(externalId, uuid);
-    }
-  }
-
-  // Link subtasks to their parents via depends:
-  let linkedCount = 0;
-  for (const taskData of tasks) {
-    if (!taskData.parentAsanaGid) continue;
-    const childGid = taskData[externalIdField];
-    if (!childGid) continue;
-    const childUuid = gidToUuid.get(childGid);
-    const parentUuid = gidToUuid.get(taskData.parentAsanaGid);
-    if (childUuid && parentUuid) {
-      try {
-        setDependency(childUuid, parentUuid);
-        linkedCount++;
-      } catch {
-        // Non-fatal: continue without linking
+    for (const taskData of tasks) {
+      const externalId = taskData[externalIdField];
+      if (!externalId) continue;
+      const [action, uuid] = upsertTask(externalIdField, externalId, taskData);
+      counts[action]++;
+      if (uuid) {
+        gidToUuid.set(externalId, uuid);
       }
     }
-  }
-  if (linkedCount > 0) {
-    console.log(`  Linked ${linkedCount} subtasks to their parents`);
+
+    // Link subtasks to their parents via depends:
+    let linkedCount = 0;
+    for (const taskData of tasks) {
+      if (!taskData.parentAsanaGid) continue;
+      const childGid = taskData[externalIdField];
+      if (!childGid) continue;
+      const childUuid = gidToUuid.get(childGid);
+      const parentUuid = gidToUuid.get(taskData.parentAsanaGid);
+      if (childUuid && parentUuid) {
+        try {
+          setDependency(childUuid, parentUuid);
+          linkedCount++;
+        } catch {
+          // Non-fatal: continue without linking
+        }
+      }
+    }
+    if (linkedCount > 0) {
+      console.log(`  Linked ${linkedCount} subtasks to their parents`);
+    }
+
+    let summary =
+      `  ${name}: ${counts.created} new, ` +
+      `${counts.updated} updated, ` +
+      `${counts.skipped} unchanged`;
+    if (filteredOut) {
+      summary += `, ${filteredOut} filtered out by LLM`;
+    }
+    console.log(summary);
   }
 
-  let summary =
-    `  ${name}: ${counts.created} new, ` +
-    `${counts.updated} updated, ` +
-    `${counts.skipped} unchanged`;
-  if (filteredOut) {
-    summary += `, ${filteredOut} filtered out by LLM`;
+  // ── Stale task detection ──────────────────────────────────────────
+  const twTasks = findAllPendingBySource(externalIdField);
+  let staleCount = 0;
+  for (const [extId, uuid] of twTasks) {
+    if (!fetchedExternalIds.has(extId)) {
+      if (opts.dryRun) {
+        console.log(`  [dry-run] Would complete stale task: ${extId} (${uuid})`);
+      } else {
+        try {
+          completeTask(uuid);
+          console.log(`  Completed stale task: ${extId} (${uuid})`);
+        } catch {
+          console.error(`  Failed to complete stale task: ${extId} (${uuid})`);
+        }
+      }
+      staleCount++;
+    }
   }
-  console.log(summary);
+  if (staleCount > 0) {
+    console.log(`  ${staleCount} stale tasks ${opts.dryRun ? "would be " : ""}completed`);
+  }
 }
 
 // ─── dry-run push helpers ─────────────────────────────────────────

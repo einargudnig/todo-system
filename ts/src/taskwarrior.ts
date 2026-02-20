@@ -190,6 +190,36 @@ export function setDependency(childUuid: string, parentUuid: string): void {
   runTask(`${childUuid} modify depends:${parentUuid}`);
 }
 
+/** Return all pending/waiting tasks that have `externalIdField` set → Map<externalId, uuid>. */
+export function findAllPendingBySource(
+  externalIdField: string,
+): Map<string, string> {
+  const result = new Map<string, string>();
+
+  for (const status of ["pending", "waiting"]) {
+    const raw = runTask(`status:${status} ${externalIdField}.any: export`);
+    if (!raw.trim()) continue;
+    try {
+      const tasks: TaskwarriorTask[] = JSON.parse(raw);
+      for (const t of tasks) {
+        const extId = t[externalIdField] as string | undefined;
+        if (extId && t.uuid) {
+          result.set(extId, t.uuid);
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return result;
+}
+
+/** Mark a Taskwarrior task as done by UUID. */
+export function completeTask(uuid: string): void {
+  runTask(`${uuid} done`);
+}
+
 export function buildTaskData(opts: {
   description: string;
   externalIdField: "things3_uuid" | "asana_gid";
